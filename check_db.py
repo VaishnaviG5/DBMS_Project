@@ -3,6 +3,7 @@ import sqlite3
 connection = sqlite3.connect("amazon_reviews.db")
 cursor = connection.cursor()
 
+<<<<<<< Updated upstream
 # Get total review count
 cursor.execute("SELECT COUNT(*) FROM reviews")
 count = cursor.fetchone()[0]
@@ -23,5 +24,22 @@ for row in cursor.fetchall():
     print(f"Review: {row[3]}")
     print(f"Summary: {row[4]}")
     print("-" * 40)
+=======
+cursor.execute("""
+SELECT *
+FROM reviews
+LIMIT 10
+""")
+cursor.execute("""
+SELECT *
+FROM reviews
+WHERE review_rating >= 4
+LIMIT 10
+""")
+rows = cursor.fetchall()
+
+for row in rows:
+    print(row)
+>>>>>>> Stashed changes
 
 connection.close()
