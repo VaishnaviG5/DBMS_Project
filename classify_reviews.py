@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import json
+import csv
 import sqlite3
 import urllib.request
 import urllib.error
@@ -10,6 +11,7 @@ import urllib.error
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
+CSV_FILE = "flipkart_product.csv"
 DB_FILE = "amazon_reviews.db"
 MODEL_NAME = "gemini-2.5-flash"  # Supports gemini-2.5-flash, gemini-2.5-flash-lite, etc.
 
@@ -114,51 +116,110 @@ def classify_review_with_ai(review_text, question="Is this review about shipping
             
     return "ERROR: Rate limit exceeded after retries"
 
-def classify_sample_reviews(num_samples=5, question="Is this review about shipping or delivery?"):
-    """Fetch sample reviews from the SQLite DB and run AI classification."""
+def get_row_from_csv(row_index):
+    """
+    Fetch a single row from flipkart_product.csv by 1-based index (1 to 500).
+    Returns dict with row data or None.
+    """
+    if not os.path.exists(CSV_FILE):
+        print(f"Error: {CSV_FILE} not found.")
+        return None
+        
+    with open(CSV_FILE, "r", encoding="utf-8", errors="ignore") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)  # ['ProductName', 'Price', 'Rate', 'Review', 'Summary']
+        
+        current_idx = 0
+        for row in reader:
+            current_idx += 1
+            if current_idx == row_index:
+                product_name = row[0] if len(row) > 0 else ""
+                price = row[1] if len(row) > 1 else ""
+                rate = row[2] if len(row) > 2 else ""
+                review_title = row[3] if len(row) > 3 else ""
+                summary = row[4] if len(row) > 4 else ""
+                full_review = f"{review_title}. {summary}" if summary else review_title
+                return {
+                    "index": current_idx,
+                    "product_name": product_name,
+                    "price": price,
+                    "rate": rate,
+                    "review_title": review_title,
+                    "summary": summary,
+                    "full_review": full_review
+                }
+    return None
+
+def interactive_single_row_test():
+    """Interactive CLI to pick any row index, view review, ask question, and get YES/NO answer."""
     api_key = get_api_key()
     if not api_key:
         print("Error: No API key provided.")
         return
 
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
+    print("\n" + "=" * 60)
+    print("      INTERACTIVE AI REVIEW CLASSIFICATION TESTER")
+    print("=" * 60)
+    print(f"CSV File : {CSV_FILE} (Contains rows 1 to 500)")
+    print(f"AI Model : {MODEL_NAME}")
+    print("Type 'exit' or 'q' at any prompt to quit.\n")
 
-    cursor.execute("SELECT id, product_name, rate, review, summary FROM reviews LIMIT ?", (num_samples,))
-    rows = cursor.fetchall()
-    conn.close()
+    default_question = "Is this review about shipping or delivery?"
 
-    print(f"\n================ AI REVIEW CLASSIFICATION ================")
-    print(f"Model: {MODEL_NAME}")
-    print(f"Question: \"{question}\"")
-    print(f"Evaluating {len(rows)} reviews from database...")
-    print("==========================================================\n")
-
-    results = []
-    for i, row in enumerate(rows):
-        rev_id, product, rating, title, summary = row
-        full_review = f"{title}. {summary}" if summary else title
-        
-        classification = classify_review_with_ai(full_review, question, api_key)
-        
-        print(f"Review #{rev_id} [{product[:40]}... | Rating: {rating}/5]")
-        print(f"Text: \"{full_review}\"")
-        print(f"-> Classification: {classification}")
-        print("-" * 58)
-        
-        results.append({
-            "id": rev_id,
-            "product": product,
-            "review": full_review,
-            "classification": classification
-        })
-        
-        # Small delay between reviews to respect API quotas
-        if i < len(rows) - 1:
-            time.sleep(1.0)
-
-    print("\nClassification complete!")
-    return results
+    while True:
+        try:
+            user_input = input("Enter row index (1 - 500) [or 'q' to quit]: ").strip()
+            if user_input.lower() in ('q', 'exit', 'quit'):
+                print("Exiting test. Goodbye!")
+                break
+            
+            if not user_input.isdigit():
+                print(">> Please enter a valid number between 1 and 500.\n")
+                continue
+                
+            row_idx = int(user_input)
+            if row_idx < 1 or row_idx > 500:
+                print(">> Row index must be between 1 and 500.\n")
+                continue
+                
+            row_data = get_row_from_csv(row_idx)
+            if not row_data:
+                print(f">> Row {row_idx} could not be found.\n")
+                continue
+            
+            print("\n" + "-" * 60)
+            print(f"ROW #{row_data['index']} DETAILS:")
+            print(f"  Product : {row_data['product_name']}")
+            print(f"  Price   : {row_data['price']}")
+            print(f"  Rating  : {row_data['rate']}/5")
+            print(f"  Title   : {row_data['review_title']}")
+            print(f"  Summary : {row_data['summary']}")
+            print(f"  Full Review Text: \"{row_data['full_review']}\"")
+            print("-" * 60)
+            
+            # Prompt for question with default option
+            print(f"\nEnter YES/NO question to ask the AI (Press Enter for default: \"{default_question}\"):")
+            q_input = input("Question: ").strip()
+            if q_input.lower() in ('q', 'exit', 'quit'):
+                print("Exiting test. Goodbye!")
+                break
+                
+            question = q_input if q_input else default_question
+            
+            print(f"\nSending to Gemini API...")
+            start_time = time.time()
+            result = classify_review_with_ai(row_data['full_review'], question, api_key)
+            elapsed = time.time() - start_time
+            
+            print("\n" + "=" * 40)
+            print(f"  QUESTION : {question}")
+            print(f"  ANSWER   : {result}")
+            print(f"  (Response received in {elapsed:.2f}s)")
+            print("=" * 40 + "\n")
+            
+        except (KeyboardInterrupt, EOFError):
+            print("\nExiting tester.")
+            break
 
 if __name__ == "__main__":
-    classify_sample_reviews(num_samples=5, question="Is this review about shipping or delivery?")
+    interactive_single_row_test()
